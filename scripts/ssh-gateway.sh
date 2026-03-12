@@ -197,17 +197,48 @@ ROUTEREOF
     # Remove old config if exists
     sed -i '/# Container Gateway Configuration/,/# End Container Gateway/d' "$SSHD_CONFIG" 2>/dev/null || true
     
-    # Set Port globally (before any Match blocks)
-    if grep -q "^Port " "$SSHD_CONFIG"; then
-        sed -i 's/^Port .*/Port 2222/' "$SSHD_CONFIG"
-    else
-        sed -i '1i Port 2222' "$SSHD_CONFIG"
-    fi
+    # Find the line number of the first Match block (if any)
+    FIRST_MATCH=$(grep -n "^Match " "$SSHD_CONFIG" | head -1 | cut -d: -f1)
     
-    # Add our Match block at the end
-    cat >> "$SSHD_CONFIG" << 'SSHEOF'
+    if [ -n "$FIRST_MATCH" ]; then
+        # There's an existing Match block, insert our config BEFORE it
+        {
+            # Lines before the first Match block
+            head -n $((FIRST_MATCH - 1)) "$SSHD_CONFIG"
+            
+            # Our global configuration
+            cat << 'GLOBALEOF'
 
 # Container Gateway Configuration (Password Auth)
+Port 2222
+PasswordAuthentication yes
+PubkeyAuthentication no
+PermitRootLogin no
+ChallengeResponseAuthentication yes
+UsePAM yes
+
+GLOBALEOF
+            
+            # The rest of the file (including Match blocks)
+            tail -n +$FIRST_MATCH "$SSHD_CONFIG"
+            
+            # Our Match block at the very end
+            cat << 'MATCHEOF'
+
+# Container Gateway Match Block
+Match User *,!root
+    ForceCommand /var/lib/user-containers/ssh-router-password.sh
+    PermitTTY yes
+# End Container Gateway
+MATCHEOF
+        } > "${SSHD_CONFIG}.tmp"
+        mv "${SSHD_CONFIG}.tmp" "$SSHD_CONFIG"
+    else
+        # No Match blocks exist, just append everything
+        cat >> "$SSHD_CONFIG" << 'SSHEOF'
+
+# Container Gateway Configuration (Password Auth)
+Port 2222
 PasswordAuthentication yes
 PubkeyAuthentication no
 PermitRootLogin no
@@ -220,6 +251,7 @@ Match User *,!root
     PermitTTY yes
 # End Container Gateway
 SSHEOF
+    fi
     
     echo "✓ Configured SSH with password auth"
     
