@@ -70,7 +70,7 @@ Access commands:
 sudo ./multi-user-containers.sh shell john
 
 # Execute command
-sudo ./multi-user-containers.sh exec john 'apt update && apt install -y python3'
+sudo ./multi-user-containers.sh exec john 'sudo apt update && sudo apt install -y python3'
 ```
 
 ### Step 4: Setup SSH Gateway (Optional)
