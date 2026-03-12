@@ -103,6 +103,19 @@ sudo ./web-terminal-gateway.sh start
 
 ## 📚 Complete Command Reference
 
+### System Setup
+
+```bash
+# Initialize multi-user system
+sudo ./multi-user-containers.sh init
+
+# Setup SSH gateway with password auth
+sudo ./ssh-gateway.sh setup
+
+# Setup Cloudflare Tunnel (optional, for WiFi/no static IP)
+sudo ./cloudflare-tunnel-setup.sh
+```
+
 ### User Management
 
 ```bash
@@ -126,8 +139,11 @@ sudo ./multi-user-containers.sh delete-user <username>
 # List all users
 sudo ./multi-user-containers.sh list-users
 
+# Get user's password
+sudo cat /var/lib/user-containers/users/<username>/password.txt
+
 # Reset user password
-sudo ./multi-user-containers.sh reset-password <username>
+sudo ./ssh-gateway.sh reset-password <username>
 ```
 
 ### Container Operations
@@ -142,15 +158,8 @@ sudo ./multi-user-containers.sh stop <username>
 # Restart container
 sudo ./multi-user-containers.sh restart <username>
 
-# Open shell
+# Open shell (admin access)
 sudo ./multi-user-containers.sh shell <username>
-
-# Execute command
-sudo ./multi-user-containers.sh exec <username> 'command'
-
-Examples:
-  sudo ./multi-user-containers.sh exec john 'whoami'
-  sudo ./multi-user-containers.sh exec alice 'python3 --version'
 
 # View logs
 sudo ./multi-user-containers.sh logs <username> [lines]
@@ -169,48 +178,140 @@ sudo ./multi-user-containers.sh stats <username>
 # Monitor all containers
 sudo ./multi-user-containers.sh monitor
 
-# List all users and status
-sudo ./multi-user-containers.sh list-users
+# List all users and SSH status
+sudo ./ssh-gateway.sh list
+
+# Test user's SSH configuration
+sudo ./ssh-gateway.sh test <username>
+
+# View SSH access logs
+sudo tail -f /var/lib/user-containers/logs/access.log
 ```
 
 ---
 
 ## 🔐 Access Methods
 
-### Method 1: SSH Access (Recommended)
+### SSH Password Access (Recommended - Super Simple!)
 
-**Standard SSH access on port 2222**
+**Users login with just username + password - no SSH keys needed!**
+
+#### Why This Is Best
+
+- ✅ **No SSH keys** - Users don't need to generate keys
+- ✅ **No key management** - You don't manage public keys
+- ✅ **Easy onboarding** - Just send username + password
+- ✅ **Users can change passwords** - Run `passwd` inside container
+- ✅ **Works with Cloudflare Tunnel** - Same as everything else
+- ✅ **Clean system** - No extra visible users
 
 #### Setup (Admin - One Time)
 
 ```bash
-sudo ./multi-user-containers.sh init
-sudo ./multi-user-containers.sh setup-ssh
+cd ~/devops/scripts
+
+# 1. Setup password SSH gateway
+sudo ./ssh-gateway.sh setup
+
+# 2. Create users (they automatically get SSH access)
+sudo ./multi-user-containers.sh create-user john --memory 1g
+sudo ./multi-user-containers.sh create-user alice --memory 1g
 ```
+
+**Done!** Each user can now SSH with their password.
 
 #### User Connects
 
+**Direct connection:**
 ```bash
-# From any terminal (Windows/Mac/Linux)
 ssh -p 2222 john@your-server-ip
-
-# Change password on first login
-passwd
+Password: [initial password from admin]
 ```
 
-**Pros:** 
-- ✅ Standard SSH (works everywhere)
-- ✅ Users can change their own passwords
-- ✅ Secure (SSH encryption)
-- ✅ No special client needed
+**Via Cloudflare Tunnel:**
+```bash
+ssh john@ssh.yourdomain.com -o ProxyCommand="cloudflared access ssh --hostname %h"
+Password: [initial password]
+```
 
-**Cons:** 
-- Requires port forwarding if on home network
-- Needs static IP or dynamic DNS
+#### Change Password (User)
+
+Once logged in, users can change their password:
+```bash
+# Inside container
+passwd
+
+# Enter current password
+# Enter new password (twice)
+```
+
+**Password changes are permanent and secure!**
+
+#### Get User's Password (Admin)
+
+```bash
+# View initial password
+sudo cat /var/lib/user-containers/users/john/password.txt
+
+# Or reset password
+sudo ./ssh-gateway.sh reset-password john
+```
+
+#### Example SSH Config (User)
+
+Create `~/.ssh/config`:
+```
+Host mycontainer
+    HostName ssh.yourdomain.com
+    User john
+    ProxyCommand cloudflared access ssh --hostname %h
+
+# Or for direct connection
+Host mycontainer-direct
+    HostName your-server-ip
+    User john
+    Port 2222
+```
+
+Then simply:
+```bash
+ssh mycontainer
+Password: [your password]
+```
+
+**Pros:**
+- ✅ Super simple - just username + password
+- ✅ No SSH key generation needed
+- ✅ Easy for non-technical users
+- ✅ Users can change their own passwords
+- ✅ Works from any device (mobile, tablets)
+- ✅ No key management overhead
+
+**Cons:**
+- ⚠️ Less secure than SSH keys (passwords can be guessed)
+- ⚠️ Need to type password each time (unless using ssh-agent)
+
+**Security Tips:**
+- Use strong passwords (12+ characters)
+- Enable fail2ban to prevent brute force
+- Use Cloudflare Tunnel for extra protection
+- Consider Cloudflare Access for 2FA
 
 ---
 
-### Method 2: SSH via Cloudflare Tunnel (Best for WiFi/No Static IP)
+### Alternative: Direct Shell (Admin Only)
+
+**For admin access only - not for users**
+
+```bash
+# From server
+sudo ./multi-user-containers.sh shell john
+```
+
+**Pros:** Immediate access  
+**Cons:** Requires server access, admin privileges
+
+---
 
 **Perfect for laptop servers on residential WiFi with no port forwarding!**
 
@@ -364,9 +465,13 @@ sudo ./multi-user-containers.sh shell john
 **Perfect for your setup!**
 
 ```bash
-# 1. Setup everything
+# === ADMIN SETUP ===
+
+cd ~/devops/scripts
+
+# 1. Initialize everything
 sudo ./multi-user-containers.sh init
-sudo ./multi-user-containers.sh setup-ssh
+sudo ./ssh-gateway.sh setup
 sudo ./cloudflare-tunnel-setup.sh
 
 # 2. Configure tunnel for SSH
@@ -381,9 +486,21 @@ sudo systemctl restart cloudflared
 sudo ./multi-user-containers.sh create-user john --memory 1g
 sudo ./multi-user-containers.sh create-user alice --memory 1g
 
-# 5. Share with users:
-# - Install: brew install cloudflare/cloudflare/cloudflared
-# - Connect: ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.yourdomain.com" john@ssh.yourdomain.com
+# 5. Get passwords
+sudo cat /var/lib/user-containers/users/john/password.txt
+sudo cat /var/lib/user-containers/users/alice/password.txt
+
+# === USER SETUP ===
+
+# 6. Users install cloudflared (one time)
+brew install cloudflare/cloudflare/cloudflared
+
+# 7. Users connect
+ssh john@ssh.yourdomain.com -o ProxyCommand="cloudflared access ssh --hostname %h"
+Password: [initial password]
+
+# 8. Users change passwords
+passwd
 ```
 
 **Now accessible from anywhere, no port forwarding!**
@@ -398,13 +515,37 @@ sudo ./multi-user-containers.sh create-user dev1 --image node:20 --memory 1g
 sudo ./multi-user-containers.sh create-user dev2 --image python:3.11 --memory 1g
 sudo ./multi-user-containers.sh create-user dev3 --image golang:1.21 --memory 1g
 
-# Users connect via Cloudflare tunnel or direct SSH
-# Install tools inside their containers
+# Share passwords with team
+sudo cat /var/lib/user-containers/users/dev1/password.txt
+
+# Each dev logs in and installs tools
+ssh -p 2222 dev1@server-ip
+npm install -g typescript
 ```
 
 ---
 
 ### Use Case 3: Training Workshop
+
+```bash
+# Create 10 student environments
+for i in {1..10}; do
+    sudo ./multi-user-containers.sh create-user student$i \
+        --image ubuntu:22.04 \
+        --memory 512m \
+        --cpu 0.5
+done
+
+# Get all passwords
+for i in {1..10}; do
+    echo "student$i: $(sudo cat /var/lib/user-containers/users/student$i/password.txt)"
+done
+
+# Share credentials with students
+# They connect: ssh -p 2222 student1@workshop-server-ip
+```
+
+---
 
 ```bash
 # Create 10 student environments
@@ -731,12 +872,19 @@ sudo ./multi-user-containers.sh delete-user alice
 
 ## 📦 What You Get
 
+### Password-Based SSH Access
+✅ Super simple - just username + password  
+✅ No SSH keys to generate or manage  
+✅ Easy for non-technical users  
+✅ Works from any device  
+✅ Users can change passwords  
+✅ Clean system (no visible users)  
+
 ### For Laptop Servers (WiFi)
 ✅ Multi-user isolated containers  
 ✅ SSH access via Cloudflare Tunnel  
 ✅ No port forwarding needed  
 ✅ No static IP needed  
-✅ Users can change passwords  
 ✅ Complete isolation between users  
 ✅ Resource limits per user  
 ✅ Free (Cloudflare Tunnel)  
@@ -746,7 +894,6 @@ sudo ./multi-user-containers.sh delete-user alice
 ✅ Direct SSH access (port 2222)  
 ✅ Simpler setup (no tunnel)  
 ✅ Faster connection (no proxy)  
-✅ Users can change passwords  
 ✅ Complete isolation between users  
 ✅ Resource limits per user  
 
@@ -758,12 +905,15 @@ sudo ./multi-user-containers.sh delete-user alice
 
 **Key Scripts:**
 - `multi-user-containers.sh` - Container management (create, delete, monitor)
-- `cloudflare-tunnel-setup.sh` - Setup Cloudflare Tunnel
+- `ssh-gateway.sh` - Password-based SSH gateway
+- `cloudflare-tunnel-setup.sh` - Setup Cloudflare Tunnel (optional)
 
 **Related Docs:**
-- `SSH-ACCESS-GUIDE.md` - Detailed SSH setup
-- `SSH-CLOUDFLARE-TUNNEL.md` - Cloudflare-specific details
+- `SSH-PASSWORD-GUIDE.md` - Complete password SSH guide
+- `SSH-SETUP-GUIDE.md` - Detailed SSH configuration
+- `SSH-CLOUDFLARE-TUNNEL.md` - Cloudflare Tunnel specifics
 - `QUICKSTART-MULTI-USER.md` - Quick 5-minute guide
+- `SAFETY-GUIDE.md` - Laptop server safety tips
 
 ---
 
@@ -772,4 +922,4 @@ sudo ./multi-user-containers.sh delete-user alice
 **Choose your setup:**
 - **Laptop/WiFi** → Use Cloudflare Tunnel method (no port forwarding)
 - **VPS/Static IP** → Use Direct SSH method (simpler/faster)
-- **Both** → Support both for maximum flexibility
+- **Both work with passwords** → No SSH key management needed!
