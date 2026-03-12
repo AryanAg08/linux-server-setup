@@ -72,19 +72,24 @@ echo ""
 echo "2. Updating SSH configuration..."
 sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup-simple-$(date +%s)
 
-# Remove container routing
+# Remove old container routing
 sudo sed -i '/# Container Gateway Match Block/,/# End Container Gateway/d' /etc/ssh/sshd_config
+sudo sed -i '/# Simple Container Gateway/,/^$/d' /etc/ssh/sshd_config
 
-# Add simple gateway user block
+# Add simple gateway user block - ONLY for containers user
+# System users like aryan will work normally
 cat << 'EOF' | sudo tee -a /etc/ssh/sshd_config > /dev/null
 
-# Simple Container Gateway
+# Simple Container Gateway - only applies to 'containers' user
+# System users (aryan, root, etc.) work normally
 Match User containers
     ForceCommand /home/containers/gateway.sh
     PermitTTY yes
 EOF
 
 echo "✓ Updated SSH config"
+echo "✓ System user 'aryan' will work normally"
+echo "✓ User 'containers' will use gateway"
 echo ""
 
 # Use normal PAM (no custom auth needed!)
@@ -115,11 +120,14 @@ echo ""
 
 echo "=== Simple Gateway Ready! ==="
 echo ""
-echo "Now anyone can connect with:"
+echo "System user access (normal SSH):"
+echo "  ssh aryan@ssh.aryangoyal.space"
+echo "  (Use your normal system password)"
+echo ""
+echo "Container access (via gateway):"
 echo "  ssh containers@ssh.aryangoyal.space"
 echo "  Password: $GATEWAY_PASS"
-echo ""
-echo "Then they'll be asked which container and their container password."
+echo "  Then enter container username and password"
 echo ""
 echo "To create container users:"
 echo "  sudo ~/Desktop/linux-server-setup/scripts/ssh-gateway.sh create USERNAME PASSWORD"
