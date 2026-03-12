@@ -73,31 +73,44 @@ sudo ./multi-user-containers.sh shell john
 sudo ./multi-user-containers.sh exec john 'sudo apt update && sudo apt install -y python3'
 ```
 
-### Step 4: Setup SSH Gateway with Password Auth (Recommended)
+### Step 4: Setup Simple Container Gateway
 
-**PASSWORD-BASED SSH (No Keys Required)**
+**SIMPLE PASSWORD-BASED GATEWAY**
+
+The system uses a single `containers` gateway user that everyone connects through:
 
 ```bash
-# 1. Setup SSH gateway with password authentication
-sudo ./ssh-gateway.sh setup
+# 1. Setup the gateway system
+cd ~/Desktop/linux-server-setup/scripts
+sudo ./simple-gateway-setup.sh
 
-# 2. Create a user with container
-sudo ./multi-user-containers.sh create-user john
+# This creates:
+# - A 'containers' gateway user (password: gateway123)
+# - Interactive menu to select which container
+# - Your system user (aryan) still works normally
 
-# Output shows the generated password:
-# Username: john
-# Password: hG8kL3mP9nQ2s
+# 2. Create container users
+sudo ./ssh-gateway.sh create ary MyPassword123
+sudo ./ssh-gateway.sh create john AnotherPass456
 
-# 3. User can now connect with password:
-ssh -p 2222 john@your-server-ip
-# Enter password when prompted
+# 3. Connect from anywhere
+ssh containers@ssh.aryangoyal.space
+# Password: gateway123 (gateway password)
+# Username: ary (container user)
+# Password: MyPassword123 (container password)
+# → You're now in ary's container!
 
-# 4. With Cloudflare Tunnel (for remote access):
-ssh john@ssh.yourdomain.com -o ProxyCommand="cloudflared access ssh --hostname %h"
+# 4. System admin access still works normally
+ssh aryan@ssh.aryangoyal.space
+# → Regular system access
 ```
 
 **HOW IT WORKS:**
-- Users are authenticated against `/var/lib/user-containers/users.db`
+- Everyone connects as `containers` user
+- Gateway script asks which container you want
+- Checks your container password from `/var/lib/user-containers/users.db`
+- Connects you to your isolated Docker container
+- System users (like `aryan`) bypass the gateway completely
 - Passwords are stored as SHA256 hashes
 - SSH automatically routes users to their Docker containers
 - No system users are created (no login screen pollution)
@@ -111,20 +124,51 @@ sudo cat /var/lib/user-containers/users.db
 # Format: username:container_name:password_hash:timestamp:resources
 
 # Reset a user's password
-sudo ./multi-user-containers.sh reset-password john
+sudo ./ssh-gateway.sh reset-password john
 # New password will be displayed
 
 # Test if password is correct (manual check)
 USERNAME="john"
-PASSWORD="hG8kL3mP9nQ2s"
+PASSWORD="NewPassword123"
 STORED_HASH=$(sudo grep "^$USERNAME:" /var/lib/user-containers/users.db | cut -d: -f3)
 TEST_HASH=$(echo -n "$PASSWORD" | sha256sum | awk '{print $1}')
 [ "$TEST_HASH" = "$STORED_HASH" ] && echo "✓ Password matches" || echo "✗ Wrong password"
 
-# Check SSH logs if login fails
-sudo tail -50 /var/log/auth.log | grep -i ssh
-sudo tail -50 /var/log/auth.log | grep -i pam
+# Check authentication logs if login fails
+sudo tail -50 /var/log/auth.log | grep -i sshd
+sudo tail -50 /var/log/container-access.log
 ```
+
+---
+
+## 🔒 Security Improvements
+
+**Current Status**: Basic security (good for development/learning)
+
+To enhance security for production use:
+
+```bash
+cd ~/Desktop/linux-server-setup/security
+
+# 1. Change gateway password (REQUIRED for production)
+sudo passwd containers
+
+# 2. Add audit logging (Recommended)
+sudo bash add-logging.sh
+
+# 3. Enable SSH keys instead of passwords (Highly Recommended)
+bash enable-ssh-keys.sh
+
+# 4. Upgrade to bcrypt password hashing (Recommended)
+sudo bash improve-password-hashing.sh
+
+# 5. Add fail2ban rate limiting (Optional)
+sudo bash setup-fail2ban.sh
+```
+
+See `security/README.md` for detailed security documentation.
+
+---
 
 ### Step 5: Setup Web Terminal (Optional)
 
