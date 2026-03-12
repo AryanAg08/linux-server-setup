@@ -187,11 +187,8 @@ create_user() {
         chmod 700 /home/$USERNAME/.ssh
     " 2>/dev/null || true
     
-    # Create system user for SSH access
-    if ! id "$USERNAME" &>/dev/null; then
-        useradd -m -s /usr/local/bin/container-ssh-wrapper "$USERNAME" 2>/dev/null || true
-        echo "$USERNAME:$PASSWORD" | chpasswd
-    fi
+    # DON'T create system user - SSH gateway will handle routing with dockergw user
+    # The password database will be used for authentication
     
     # Save user to database
     echo "$USERNAME:$CONTAINER_NAME:$PASSWORD_HASH:$(date +%s):cpu=$CPU_LIMIT,mem=$MEMORY_LIMIT,disk=$DISK_LIMIT" | sudo tee -a "$USERS_DB" > /dev/null

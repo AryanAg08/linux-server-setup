@@ -73,18 +73,57 @@ sudo ./multi-user-containers.sh shell john
 sudo ./multi-user-containers.sh exec john 'sudo apt update && sudo apt install -y python3'
 ```
 
-### Step 4: Setup SSH Gateway (Optional)
+### Step 4: Setup SSH Gateway with Password Auth (Recommended)
+
+**PASSWORD-BASED SSH (No Keys Required)**
 
 ```bash
-# Setup SSH gateway on port 2222
+# 1. Setup SSH gateway with password authentication
 sudo ./ssh-gateway.sh setup
 
-# Add user's SSH key
-sudo ./ssh-gateway.sh add-key john
-# Paste public key when prompted
+# 2. Create a user with container
+sudo ./multi-user-containers.sh create-user john
 
-# User can now connect:
+# Output shows the generated password:
+# Username: john
+# Password: hG8kL3mP9nQ2s
+
+# 3. User can now connect with password:
 ssh -p 2222 john@your-server-ip
+# Enter password when prompted
+
+# 4. With Cloudflare Tunnel (for remote access):
+ssh john@ssh.yourdomain.com -o ProxyCommand="cloudflared access ssh --hostname %h"
+```
+
+**HOW IT WORKS:**
+- Users are authenticated against `/var/lib/user-containers/users.db`
+- Passwords are stored as SHA256 hashes
+- SSH automatically routes users to their Docker containers
+- No system users are created (no login screen pollution)
+- Users can change passwords inside their containers with `passwd`
+
+**PASSWORD MANAGEMENT:**
+
+```bash
+# View all users
+sudo cat /var/lib/user-containers/users.db
+# Format: username:container_name:password_hash:timestamp:resources
+
+# Reset a user's password
+sudo ./multi-user-containers.sh reset-password john
+# New password will be displayed
+
+# Test if password is correct (manual check)
+USERNAME="john"
+PASSWORD="hG8kL3mP9nQ2s"
+STORED_HASH=$(sudo grep "^$USERNAME:" /var/lib/user-containers/users.db | cut -d: -f3)
+TEST_HASH=$(echo -n "$PASSWORD" | sha256sum | awk '{print $1}')
+[ "$TEST_HASH" = "$STORED_HASH" ] && echo "✓ Password matches" || echo "✗ Wrong password"
+
+# Check SSH logs if login fails
+sudo tail -50 /var/log/auth.log | grep -i ssh
+sudo tail -50 /var/log/auth.log | grep -i pam
 ```
 
 ### Step 5: Setup Web Terminal (Optional)
@@ -700,6 +739,189 @@ sudo ./ssh-gateway.sh remove-key old-user
 
 # Clean Docker
 docker system prune -af
+```
+
+---
+
+## 🌐 Remote Access with Cloudflare Tunnels
+
+### Why Cloudflare Tunnels?
+
+Perfect for accessing your containers remotely without:
+- ❌ Port forwarding
+- ❌ Static IP address
+- ❌ Firewall configuration
+- ❌ Exposing SSH directly to internet
+
+### Setup Cloudflare Tunnel for SSH
+
+**Step 1: Install cloudflared**
+
+On your Linux server:
+```bash
+# Download cloudflared
+wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+sudo chmod +x /usr/local/bin/cloudflared
+```
+
+**Step 2: Authenticate with Cloudflare**
+
+```bash
+cloudflared tunnel login
+# Opens browser - login with your Cloudflare account
+```
+
+**Step 3: Create a Tunnel**
+
+```bash
+# Create tunnel named "ssh-gateway"
+cloudflared tunnel create ssh-gateway
+
+# Note the Tunnel ID shown (like: 8e2a5f7b-3c4d-4e5f-8a9b-1c2d3e4f5a6b)
+```
+
+**Step 4: Configure Tunnel**
+
+Create config file:
+```bash
+sudo nano ~/.cloudflared/config.yml
+```
+
+Add this configuration:
+```yaml
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /root/.cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  # SSH access through Cloudflare
+  - hostname: ssh.yourdomain.com
+    service: ssh://localhost:2222
+  # Catch-all rule (required)
+  - service: http_status:404
+```
+
+**Step 5: Create DNS Record**
+
+```bash
+cloudflared tunnel route dns ssh-gateway ssh.yourdomain.com
+```
+
+**Step 6: Run Tunnel**
+
+```bash
+# Test first
+cloudflared tunnel run ssh-gateway
+
+# If works, install as service
+sudo cloudflared service install
+sudo systemctl enable cloudflared
+sudo systemctl start cloudflared
+sudo systemctl status cloudflared
+```
+
+### Connecting Through Cloudflare Tunnel
+
+**On Client Machine (Mac/Linux/Windows):**
+
+```bash
+# Install cloudflared client
+# Mac:
+brew install cloudflare/cloudflare/cloudflared
+
+# Linux:
+wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+sudo chmod +x /usr/local/bin/cloudflared
+
+# Windows:
+# Download from: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/
+```
+
+**Connect via SSH:**
+
+```bash
+# Method 1: Using ProxyCommand (Recommended)
+ssh john@ssh.yourdomain.com \
+  -o ProxyCommand="cloudflared access ssh --hostname %h"
+
+# Method 2: Using cloudflared access directly
+cloudflared access ssh --hostname ssh.yourdomain.com --url john@ssh.yourdomain.com
+```
+
+**Add to ~/.ssh/config for easy access:**
+
+```
+Host myserver
+    HostName ssh.yourdomain.com
+    User john
+    ProxyCommand cloudflared access ssh --hostname %h
+```
+
+Now just use:
+```bash
+ssh myserver
+```
+
+### Cloudflare Access Policies (Optional Security)
+
+Add authentication before SSH:
+
+1. Go to Cloudflare Zero Trust Dashboard
+2. Navigate to **Access** → **Applications**
+3. Click **Add an Application** → **Self-hosted**
+4. Configure:
+   - **Application name:** SSH Gateway
+   - **Session duration:** 24 hours
+   - **Application domain:** ssh.yourdomain.com
+5. Add access policy:
+   - **Rule name:** Allow specific emails
+   - **Rule action:** Allow
+   - **Include:** Emails ending in @yourdomain.com
+
+Now users must authenticate through Cloudflare before SSH login!
+
+### Troubleshooting Cloudflare Tunnel
+
+**Tunnel not connecting:**
+```bash
+# Check tunnel status
+sudo systemctl status cloudflared
+
+# View logs
+sudo journalctl -u cloudflared -f
+
+# Test tunnel manually
+cloudflared tunnel run ssh-gateway
+```
+
+**DNS not resolving:**
+```bash
+# Verify DNS record
+dig ssh.yourdomain.com
+
+# Check Cloudflare DNS settings in dashboard
+```
+
+**SSH connection times out:**
+```bash
+# Verify SSH service is running on port 2222
+sudo netstat -tlnp | grep 2222
+
+# Test local SSH works
+ssh -p 2222 john@localhost
+
+# Check firewall (should not block, tunnel handles it)
+sudo ufw status
+```
+
+**Connection refused:**
+```bash
+# Ensure service points to correct port in config.yml
+# Should be: service: ssh://localhost:2222
+
+# Restart tunnel
+sudo systemctl restart cloudflared
 ```
 
 ---

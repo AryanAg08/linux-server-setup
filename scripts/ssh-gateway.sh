@@ -68,18 +68,16 @@ setup_gateway() {
         fi
     fi
     
-    # Create PAM password file
-    touch /etc/pam.d/sshd-containers
-    cat > /etc/pam.d/sshd-containers << 'PAMEOF'
-#%PAM-1.0
-# Custom PAM for container users
-
-# Check against custom password file
-auth required pam_exec.so quiet /var/lib/user-containers/check-password.sh
-account required pam_permit.so
-session required pam_permit.so
-PAMEOF
-    echo "✓ Created PAM configuration"
+    # Backup original PAM sshd config
+    if [ ! -f /etc/pam.d/sshd.backup ]; then
+        cp /etc/pam.d/sshd /etc/pam.d/sshd.backup
+        echo "✓ Backed up PAM sshd config"
+    fi
+    
+    # Modify SSH PAM config to use custom password checker
+    # Insert our custom auth at the beginning
+    sed -i '/^#%PAM-1.0/a # Custom container user authentication\nauth    [success=done new_authtok_reqd=done default=ignore]   pam_exec.so quiet /var/lib/user-containers/check-password.sh' /etc/pam.d/sshd
+    echo "✓ Updated SSH PAM configuration"
     
     # Create password checker script
     cat > /var/lib/user-containers/check-password.sh << 'CHECKEOF'
