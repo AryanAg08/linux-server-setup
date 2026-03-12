@@ -195,12 +195,19 @@ ROUTEREOF
     
     # Configure SSH for password auth
     # Remove old config if exists
-    sed -i '/# Container Gateway Configuration/,/^$/d' "$SSHD_CONFIG" 2>/dev/null || true
+    sed -i '/# Container Gateway Configuration/,/# End Container Gateway/d' "$SSHD_CONFIG" 2>/dev/null || true
     
+    # Set Port globally (before any Match blocks)
+    if grep -q "^Port " "$SSHD_CONFIG"; then
+        sed -i 's/^Port .*/Port 2222/' "$SSHD_CONFIG"
+    else
+        sed -i '1i Port 2222' "$SSHD_CONFIG"
+    fi
+    
+    # Add our Match block at the end
     cat >> "$SSHD_CONFIG" << 'SSHEOF'
 
 # Container Gateway Configuration (Password Auth)
-Port 2222
 PasswordAuthentication yes
 PubkeyAuthentication no
 PermitRootLogin no
@@ -211,6 +218,7 @@ UsePAM yes
 Match User *,!root
     ForceCommand /var/lib/user-containers/ssh-router-password.sh
     PermitTTY yes
+# End Container Gateway
 SSHEOF
     
     echo "✓ Configured SSH with password auth"
